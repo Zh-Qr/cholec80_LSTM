@@ -1,0 +1,22 @@
+cnn:
+  num_epochs: 50
+  batch_size: 128
+  lr: 0.001
+  step_size: 30
+  gamma: 0.1
+  save_name: "CNN"
+  tactic: None
+
+lstm:
+  num_epochs: 100
+  batch_size: 32
+  lr: 0.001
+  step_size: 30
+  gamma: 0.1
+  save_name: "LSTM"
+
+paths:
+  path_frame: "../autodl-tmp"
+  split_dir: "../splite_dir"
+  features_save_dir: "extracted_features_csv"
+  test_directory: "../splite_dir/test_videos.txt"

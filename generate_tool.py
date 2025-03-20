@@ -1,17 +1,9 @@
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
-from torchvision.models import ResNet50_Weights
 from PIL import Image
-import yaml
 import os
 
-def load_config(config_file='config.yaml'):
-    with open(config_file, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-    return config
-
-config = load_config("config/predicate_config.yaml")
 # 设置设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -19,13 +11,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 num_classes = 7
 
 # 构建模型：使用预训练的 ResNet50，并将最后一层替换为适合多标签分类的全连接层
-model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+model = models.resnet50(pretrained=True)
 in_features = model.fc.in_features
 model.fc = nn.Linear(in_features, num_classes)
 model = model.to(device)
 
 # 加载模型权重（确保文件路径正确，此处假设权重文件名为 weight/tool_detection.pth）
-checkpoint_path = config['paths']['path_tool_model']
+checkpoint_path = 'weight/tool_detection2.pth'
 state_dict = torch.load(checkpoint_path, map_location=device)
 model.load_state_dict(state_dict, strict=False)
 model.eval()
@@ -39,9 +31,9 @@ test_transform = transforms.Compose([
 ])
 
 # 输入帧文件夹路径
-frames_root = config['paths']['frames_root']
+frames_root = '../autodl-tmp/frames'
 # 输出预测结果文件夹（若不存在则自动创建）
-output_dir = config['paths']['save_tool_dir']
+output_dir = 'noisy_tools'
 os.makedirs(output_dir, exist_ok=True)
 
 # 工具名称列表（顺序与模型输出对应）

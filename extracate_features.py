@@ -6,111 +6,94 @@ from tqdm import tqdm
 import csv
 import utils_data
 import utils_model
-import yaml
 
-def load_config(config_file='config.yaml'):
-    with open(config_file, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-    return config
 
-def extract_features_and_generate_labels(frame_store, save_state_dir, save_feature_dir, model, transform, device):
+path_model = 'weight/dataaug'
+path_frame = 'autodl-tmp'
+save_dir="extracted_features_csv"
+
+def extract_features_with_accuracy(frame_store, save_dir, model, transform, device):
     """
-    从视频帧数据中一次推理，提取特征、预测标签，并同时保存：
-      - CSV 文件：每一行包含特征向量（例如2048维）、预测标签、实际标签
-      - TXT 文件：保存每一帧的预测标签，用于后续比较或其它用途
-
+    从给定的视频帧数据中提取特征并保存到CSV文件，同时计算每个视频的预测准确率。
+    
     参数:
-      - frame_store: VideoFrameStore 实例，包含视频帧及其状态。
-      - save_dir: 保存生成文件的目录。
-      - model: 用于推理的模型，应返回 (feature, outputs) ，其中 feature 用于特征保存，outputs 为分类输出 logits。
-      - transform: 图像预处理转换操作。
-      - device: 计算设备（CPU 或 GPU）。
+    - frame_store: VideoFrameStore 实例，包含视频帧及其状态。
+    - save_dir: 保存特征数据的目录。
+    - model2048: 用于提取特征的预训练模型（ResNet50V2）。
+    - model: 用于分类的模型（可能是一个7类分类模型）。
+    - transform: 用于图像预处理的转换操作。
+    - device: 计算设备（CPU或GPU）。
     """
-    model.eval()
-    if not os.path.exists(save_state_dir):
-        os.makedirs(save_state_dir)
-        
-    if not os.path.exists(save_feature_dir):
-        os.makedirs(save_feature_dir)
+    model.eval()  # 将模型设置为评估模式
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
 
-    # 遍历每个视频
+    # 遍历视频数据，逐个处理视频
     for video_id, frames in frame_store.data.items():
-        csv_file = os.path.join(save_feature_dir, f"{video_id}_features.csv")
-        txt_file = os.path.join(save_state_dir, f"{video_id}.txt")
-        
+        video_feature_file = os.path.join(save_dir, f"{video_id}_features.csv")
         correct_predictions = 0
         total_frames = 0
-
-        # 打开 CSV 文件写入标题，同时打开 TXT 文件用于写入预测标签
-        with open(csv_file, mode='w', newline='') as csvfile, open(txt_file, mode='w', encoding='utf-8') as txtfile:
-            writer = csv.writer(csvfile)
-            # 假设特征维度为2048；可以根据实际模型的输出修改此处
-            writer.writerow([f"Feature_{i}" for i in range(2048)])
-            
-            frame_items = list(frames.items())
-            loop = tqdm(frame_items, desc=f"Processing {video_id}", unit="frame")
-            for frame_number, (frame_path, state) in loop:
-                if not frame_path:
-                    continue
-                # 加载图像并转换
-                try:
-                    image = Image.open(frame_path).convert("RGB")
-                except Exception as e:
-                    print(f"加载图像 {frame_path} 出错：{e}")
-                    continue
-                image = transform(image).unsqueeze(0).to(device)
-                
-                with torch.no_grad():
-                    # model 返回 (feature, outputs)
-                    feature, outputs = model(image)
-                
-                # 将 feature 展平为一维，并转移到 CPU
-                feature = feature.view(-1).cpu().numpy()
-                # 获取预测标签（互斥分类使用 argmax）
-                predicted_label = torch.argmax(outputs, dim=1).item()
-                # 更新准确率统计
-                if predicted_label == state:
-                    correct_predictions += 1
-                total_frames += 1
-
-                # 写入 CSV 行：特征、预测标签、实际标签
-                writer.writerow(list(feature))
-                # 写入 TXT 文件：预测标签（每行一个标签）
-                txtfile.write(f"{predicted_label}\n")
-                
-                loop.set_postfix({"Processed": total_frames})
         
-        # 计算并打印视频准确率
-        accuracy = correct_predictions / total_frames if total_frames > 0 else 0
-        print(f"视频 {video_id} 处理完成，保存 CSV 到 {csv_file}，TXT 到 {txt_file}。准确率: {accuracy:.4f}")
+        # 打开CSV文件并写入标题
+        with open(video_feature_file, mode='w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow([f"Feature_{i}" for i in range(2048)] + ["Predicted_Label", "Actual_Label"])  # 添加标签列
+
+            # 使用tqdm包装数据加载的过程，显示进度条
+            frame_items = list(frames.items())
+            loop = tqdm(frame_items, desc=f"Extracting features for {video_id}", unit="frame")
+            
+            for frame_number, (frame_path, state) in loop:
+                if frame_path:  # 确保帧路径存在
+                    # 加载并转换图像
+                    image = Image.open(frame_path).convert("RGB")
+                    image = transform(image).unsqueeze(0).to(device)
+
+                    # 提取特征和预测标签
+                    with torch.no_grad():
+                        feature, outputs = model(image)  # 使用model进行一次推理，返回特征和预测结果
+                    
+                    feature = feature.view(-1).cpu().numpy()  # 展平特征为一维
+
+                    # 获取预测标签
+                    _, predicted_label = torch.max(outputs, 1)
+
+                    # 更新准确率
+                    if predicted_label.item() == state:  # 如果预测标签等于实际标签
+                        correct_predictions += 1
+                    total_frames += 1
+                    
+                    # 将特征和标签写入CSV
+                    writer.writerow(list(feature) + [predicted_label.item(), state])  # 使用item()获取标量值
+                
+                # 更新进度条
+                loop.set_postfix({"Processed": len(loop)})  # 更新进度条显示
+        
+        # 计算视频准确率
+        if total_frames > 0:
+            accuracy = correct_predictions / total_frames
+        else:
+            accuracy = 0
+
+        print(f"视频 {video_id} 的特征已保存到 {video_feature_file}. 准确率: {accuracy:.4f}")
+
 
 if __name__ == '__main__':
-    config = load_config("config/predicate_config.yaml")
-    # 示例路径配置
-    frame_path = config['paths']['frame_path']
-    save_state_dir = config['paths']['save_state_dir']
-    save_feature_dir = config['paths']['save_feature_cnn_dir']
-    
-    # 创建数据集实例（这里假设 utils_data.VideoFrameStore 根据 frame_path 读取视频帧数据，并组织为 {video_id: {frame_number: (frame_path, state)} }）
-    frame_store = utils_data.VideoFrameStore(frame_path)
-    
+    # 创建数据集实例
+    frame_store = utils_data.VideoFrameStore(path_frame)
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # 加载预训练模型（示例中使用 ResNet50V2FeatureExtractor，自行根据实际情况修改）
-    model = utils_model.ResNet50V2FeatureExtractor(num_classes=7, pretrained=True)
-    model = model.to(device)
-    
-    # 加载权重文件（可选）
-    path_model = config['paths']['path_feature_model']
-    state_dict = torch.load(path_model, map_location=device)
-    model.load_state_dict(state_dict, strict=False)
-    
-    # 定义图像转换
+    model_pre = utils_model.ResNet50V2FeatureExtractor(num_classes=7, pretrained=True)
+    model_pre = model_pre.to(device)
+
+    state_dict = torch.load(path_model)
+    model_pre.load_state_dict(state_dict, strict=False)
+    # 数据转换定义
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    
-    # 调用合并函数
-    extract_features_and_generate_labels(frame_store, save_state_dir, save_feature_dir, model=model, transform=transform, device=device)
+
+    # 调用特征提取函数
+    extract_features_with_accuracy(frame_store, save_dir, model=model_pre, transform=transform, device=device)
